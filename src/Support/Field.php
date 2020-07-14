@@ -14,6 +14,7 @@ use Rebing\GraphQL\Error\AuthorizationError;
 use Rebing\GraphQL\Error\ValidationError;
 use Rebing\GraphQL\Support\AliasArguments\AliasArguments;
 use ReflectionMethod;
+use ReflectionParameter;
 
 /**
  * @property string $name
@@ -161,28 +162,28 @@ abstract class Field
 
             $additionalParams = array_slice($method->getParameters(), 3);
 
-            $additionalArguments = array_map(function ($param) use ($arguments, $fieldsAndArguments) {
-                $className = null !== $param->getClass() ? $param->getClass()->getName() : null;
+            $additionalArguments = array_map(function (ReflectionParameter $param) use ($arguments, $fieldsAndArguments) {
 
-                if (null === $className) {
+                if($param->getClass() === null){
                     throw new InvalidArgumentException("'{$param->name}' could not be injected");
                 }
 
-                if (Closure::class === $param->getType()->getName()) {
+                if($param->getType()->getName() === Closure::class){
                     return function (int $depth = null) use ($arguments, $fieldsAndArguments): SelectFields {
                         return $this->instanciateSelectFields($arguments, $fieldsAndArguments, $depth);
                     };
                 }
 
-                if (SelectFields::class === $className) {
-                    return $this->instanciateSelectFields($arguments, $fieldsAndArguments, null);
-                }
+                switch($className = $param->getClass()->getName()){
+                    case SelectFields::class:
+                        return $this->instanciateSelectFields($arguments, $fieldsAndArguments, null);
+                    
+                    case ResolveInfo::class:
+                        return $arguments[3];
 
-                if (ResolveInfo::class === $className) {
-                    return $arguments[3];
+                    default:
+                        return app()->make($className);
                 }
-
-                return app()->make($className);
             }, $additionalParams);
 
             return call_user_func_array($resolver, array_merge(
@@ -198,7 +199,7 @@ abstract class Field
      * @param array<string,mixed> $fieldsAndArguments
      * @return SelectFields
      */
-    private function instanciateSelectFields(array $arguments, array $fieldsAndArguments, int $depth = null): SelectFields
+    protected function instanciateSelectFields(array $arguments, array $fieldsAndArguments, int $depth = null): SelectFields
     {
         $ctx = $arguments[2] ?? null;
 
@@ -207,7 +208,12 @@ abstract class Field
                 ->getFieldsAndArgumentsSelection($depth);
         }
 
-        return new SelectFields($this->type(), $arguments[1], $ctx, $fieldsAndArguments);
+        return $this->newSelectFieldsInstance($this->type(), $arguments[1], $ctx, $fieldsAndArguments);
+    }
+
+    protected function newSelectFieldsInstance(GraphqlType $type, array $queryArguments, $context, array $fieldsAndArguments) : SelectFields
+    {
+        return new SelectFields($type, $queryArguments, $context, $fieldsAndArguments);
     }
 
     protected function aliasArgs(array $arguments): array
