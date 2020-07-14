@@ -170,6 +170,12 @@ return [
     'pagination_type' => \Rebing\GraphQL\Support\PaginationType::class,
 
     /*
+     * The class to use for "SelectFields" which holds a bunch of logic
+     * like how to resolve relations and fields.
+     */
+    'select_fields_class' => \Rebing\GraphQL\Support\SelectFields::class,
+
+    /*
      * Config for GraphiQL (see (https://github.com/graphql/graphiql).
      */
     'graphiql' => [

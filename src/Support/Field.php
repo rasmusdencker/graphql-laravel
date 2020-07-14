@@ -213,7 +213,9 @@ abstract class Field
 
     protected function newSelectFieldsInstance(GraphqlType $type, array $queryArguments, $context, array $fieldsAndArguments) : SelectFields
     {
-        return new SelectFields($type, $queryArguments, $context, $fieldsAndArguments);
+        $selectFieldsClass = config('graphql.select_fields_class', SelectFields::class);
+
+        return new $selectFieldsClass($type, $queryArguments, $context, $fieldsAndArguments);
     }
 
     protected function aliasArgs(array $arguments): array
