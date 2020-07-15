@@ -101,10 +101,10 @@ $router->group(array_merge([
 });
 
 if (config('graphql.graphiql.display', true)) {
-    $router->group([
+    $router->group(array_merge( [
         'prefix' => config('graphql.graphiql.prefix', 'graphiql'),
         'middleware' => config('graphql.graphiql.middleware', []),
-    ], function ($router) use ($schemaParameterPattern): void {
+    ],config('graphql.graphiql.route_group_attributes', []  ), function ($router) use ($schemaParameterPattern): void {
         /** @var \Illuminate\Routing\Router|\Laravel\Lumen\Routing\Router $router */
         $graphiqlController = config('graphql.graphiql.controller', GraphQLController::class.'@graphiql');
 

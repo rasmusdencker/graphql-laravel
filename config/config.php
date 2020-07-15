@@ -184,6 +184,7 @@ return [
         'middleware' => [],
         'view' => 'graphql::graphiql',
         'display' => env('ENABLE_GRAPHIQL', true),
+        'route_group_attributes' => [],
     ],
 
     /*
