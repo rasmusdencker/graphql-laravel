@@ -6,8 +6,10 @@ namespace Rebing\GraphQL\Support;
 
 use Closure;
 use GraphQL\Type\Definition\ResolveInfo;
-use GraphQL\Type\Definition\Type as GraphqlType;
+use GraphQL\Type\Definition\Type as GraphQLType;
 use Illuminate\Contracts\Validation\Validator as ValidatorContract;
+use Illuminate\Pipeline\Pipeline;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Validator;
 use InvalidArgumentException;
 use Rebing\GraphQL\Error\AuthorizationError;
@@ -30,6 +32,9 @@ abstract class Field
 
     protected $attributes = [];
 
+    /** @var string[] */
+    protected $middleware = [];
+
     /**
      * Override this in your queries or mutations
      * to provide custom authorization.
@@ -51,7 +56,7 @@ abstract class Field
         return [];
     }
 
-    abstract public function type(): GraphqlType;
+    abstract public function type(): GraphQLType;
 
     /**
      * @return array<string,array>
@@ -117,7 +122,48 @@ abstract class Field
         return Validator::make($args, $rules, $messages);
     }
 
+    /**
+     * @return array<string>
+     */
+    protected function getMiddleware(): array
+    {
+        return $this->middleware;
+    }
+
     protected function getResolver(): ?Closure
+    {
+        $resolver = $this->originalResolver();
+
+        if (! $resolver) {
+            return null;
+        }
+
+        return function ($root, ...$arguments) use ($resolver) {
+            $middleware = $this->getMiddleware();
+
+            return app()->make(Pipeline::class)
+                ->send(array_merge([$this], $arguments))
+                ->through($middleware)
+                ->via('resolve')
+                ->then(function ($arguments) use ($middleware, $resolver, $root) {
+                    $result = $resolver($root, ...array_slice($arguments, 1));
+
+                    foreach ($middleware as $name) {
+                        $instance = app()->make($name);
+
+                        if (method_exists($instance, 'terminate')) {
+                            app()->terminating(function () use ($arguments, $instance, $result) {
+                                $instance->terminate($this, ...array_slice($arguments, 1), ...[$result]);
+                            });
+                        }
+                    }
+
+                    return $result;
+                });
+        };
+    }
+
+    protected function originalResolver(): ?Closure
     {
         if (! method_exists($this, 'resolve')) {
             return null;
@@ -162,13 +208,16 @@ abstract class Field
 
             $additionalParams = array_slice($method->getParameters(), 3);
 
-            $additionalArguments = array_map(function (ReflectionParameter $param) use ($arguments, $fieldsAndArguments) {
+            $additionalArguments = array_map(function ($param) use ($arguments, $fieldsAndArguments) {
+                $paramType = $param->getType();
 
-                if($param->getClass() === null){
+                if ($paramType->isBuiltin()) {
                     throw new InvalidArgumentException("'{$param->name}' could not be injected");
                 }
 
-                if($param->getType()->getName() === Closure::class){
+                $className = $param->getType()->getName();
+
+                if (Closure::class === $className) {
                     return function (int $depth = null) use ($arguments, $fieldsAndArguments): SelectFields {
                         return $this->instanciateSelectFields($arguments, $fieldsAndArguments, $depth);
                     };

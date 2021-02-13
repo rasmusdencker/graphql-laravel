@@ -2,6 +2,8 @@
 
 [![Latest Stable Version](https://poser.pugx.org/rebing/graphql-laravel/v/stable)](https://packagist.org/packages/rebing/graphql-laravel)
 [![License](https://poser.pugx.org/rebing/graphql-laravel/license)](https://packagist.org/packages/rebing/graphql-laravel)
+[![Tests](https://github.com/rebing/graphql-laravel/workflows/Tests/badge.svg)](https://github.com/rebing/graphql-laravel/actions?query=workflow%3ATests)
+[![Downloads](https://img.shields.io/packagist/dt/rebing/graphql-laravel.svg?style=flat-square)](https://packagist.org/packages/rebing/graphql-laravel)
 [![Get on Slack](https://img.shields.io/badge/slack-join-orange.svg)](https://join.slack.com/t/rebing-graphql/shared_invite/enQtNTE5NjQzNDI5MzQ4LTdhNjk0ZGY1N2U1YjE4MGVlYmM2YTc2YjQ0MmIwODY5MWMwZWIwYmY1MWY4NTZjY2Q5MzdmM2Q3NTEyNDYzZjc)
 
 Uses Facebook GraphQL with Laravel 6.0+. It is based on the PHP implementation [here](https://github.com/webonyx/graphql-php). You can find more information about GraphQL in the [GraphQL Introduction](http://facebook.github.io/react/blog/2015/05/01/graphql-introduction.html) on the [React](http://facebook.github.io/react) blog or you can read the [GraphQL specifications](https://facebook.github.io/graphql/). This is a work in progress.
@@ -109,6 +111,10 @@ To work this around:
       - [Adding validation to a mutation](#adding-validation-to-a-mutation)
       - [File uploads](#file-uploads)
     - [Resolve method](#resolve-method)
+    - [Resolver middleware](#resolver-middleware)
+      - [Defining middleware](#defining-middleware)
+      - [Registering middleware](#registering-middleware)
+      - [Terminable middleware](#terminable-middleware)
     - [Authorization](#authorization)
     - [Privacy](#privacy)
     - [Query variables](#query-variables)
@@ -150,15 +156,21 @@ in addition to the global middleware. For example:
 'schemas' => [
     'default' => [
         'query' => [
-            'example_query' => ExampleQuery::class,
+            ExampleQuery::class,
+            // It's possible to specify a name/alias with the key
+            // but this is discouraged as it prevents things
+            // like improving performance with e.g. `lazyload_types=true`
+            // It's recommended to specifcy just the class here and
+            // rely on the `'name'` attribute in the query / type.
+            'someQuery' => AnotherExampleQuery::class,
         ],
         'mutation' => [
-            'example_mutation'  => ExampleMutation::class,
+            ExampleMutation::class,
         ],
     ],
     'user' => [
         'query' => [
-            'profile' => App\GraphQL\Queries\ProfileQuery::class
+            App\GraphQL\Queries\ProfileQuery::class
         ],
         'mutation' => [
 
@@ -256,7 +268,7 @@ use Rebing\GraphQL\Support\Query;
 class UsersQuery extends Query
 {
     protected $attributes = [
-        'name' => 'Users query'
+        'name' => 'users',
     ];
 
     public function type(): Type
@@ -293,7 +305,7 @@ Add the query to the `config/graphql.php` configuration file
 'schemas' => [
     'default' => [
         'query' => [
-            'users' => App\GraphQL\Queries\UsersQuery::class
+            App\GraphQL\Queries\UsersQuery::class
         ],
         // ...
     ]
@@ -335,7 +347,7 @@ use Rebing\GraphQL\Support\Mutation;
 class UpdateUserPasswordMutation extends Mutation
 {
     protected $attributes = [
-        'name' => 'UpdateUserPassword'
+        'name' => 'updateUserPassword'
     ];
 
     public function type(): Type
@@ -416,7 +428,7 @@ use Rebing\GraphQL\Support\Mutation;
 class UpdateUserEmailMutation extends Mutation
 {
     protected $attributes = [
-        'name' => 'UpdateUserEmail'
+        'name' => 'updateUserEmail'
     ];
 
     public function type(): Type
@@ -565,7 +577,7 @@ use Rebing\GraphQL\Support\Mutation;
 class UserProfilePhotoMutation extends Mutation
 {
     protected $attributes = [
-        'name' => 'UpdateUserProfilePhoto'
+        'name' => 'userProfilePhoto',
     ];
 
     public function type(): Type
@@ -640,14 +652,14 @@ Note: You can test your file upload implementation using [Altair](https://altair
         bodyFormData.set('operationName', null);
         bodyFormData.set('map', JSON.stringify({"file":["variables.file"]}));
         bodyFormData.append('file', this.file);
-        
+
         // Post the request to GraphQL controller
         let res = await axios.post('/graphql', bodyFormData, {
           headers: {
             "Content-Type": "multipart/form-data"
           }
         });
-        
+
         if (res.data.status.code == 200) {
           // On success file upload
           this.file = null;
@@ -728,7 +740,7 @@ use SomeClassNamespace\SomeClassThatDoLogging;
 class UsersQuery extends Query
 {
     protected $attributes = [
-        'name' => 'User query'
+        'name' => 'users',
     ];
 
     public function type(): Type
@@ -756,6 +768,159 @@ class UsersQuery extends Query
     }
 }
 ```
+
+### Resolver middleware
+
+#### Defining middleware
+
+To create a new middleware, use the `make:graphql:middleware` Artisan command
+
+```sh
+php artisan make:graphql:middleware ResolvePage
+```
+
+This command will place a new ResolvePage class within your app/GraphQL/Middleware directory.
+In this middleware, we will set the Paginator current page to the argument we accept via our `PaginationType`:
+
+```php
+namespace App\GraphQL\Middleware;
+
+use Closure;
+use GraphQL\Type\Definition\ResolveInfo;
+use Illuminate\Pagination\Paginator;
+use Rebing\GraphQL\Support\Middleware;
+
+class ResolvePage extends Middleware
+{
+    public function handle($root, $args, $context, ResolveInfo $info, Closure $next)
+    {
+        Paginator::currentPageResolver(function () use ($args) {
+            return $args['pagination']['page'] ?? 1;
+        });
+
+        return $next($root, $args, $context, $info);
+    }
+}
+```
+
+#### Registering middleware
+
+If you would like to assign middleware to specific queries/mutations,
+list the middleware class in the `$middleware` property of your query class.
+
+```php
+namespace App\GraphQL\Queries;
+
+use App\GraphQL\Middleware;
+use Rebing\GraphQL\Support\Query;
+use Rebing\GraphQL\Support\Query;
+
+class UsersQuery extends Query
+{
+    protected $middleware = [
+        Middleware\Logstash::class,
+        Middleware\ResolvePage::class,
+    ];
+}
+```
+
+If you want a middleware to run during every GraphQL query/mutation to your application,
+list the middleware class in the `$middleware` property of your base query class.
+
+```php
+namespace App\GraphQL\Queries;
+
+use App\GraphQL\Middleware;
+use Rebing\GraphQL\Support\Query as BaseQuery;
+
+abstract class Query extends BaseQuery
+{
+    protected $middleware = [
+        Middleware\Logstash::class,
+        Middleware\ResolvePage::class,
+    ];
+}
+```
+
+Alternatively, you can override `getMiddleware` to supply your own logic:
+
+```php
+    protected function getMiddleware(): array
+    {
+        return array_merge([...], $this->middleware);
+    }
+```
+
+#### Terminable middleware
+
+Sometimes a middleware may need to do some work after the response has been sent to the browser.
+If you define a terminate method on your middleware and your web server is using FastCGI,
+the terminate method will automatically be called after the response is sent to the browser:
+
+```php
+namespace App\GraphQL\Middleware;
+
+use Countable;
+use GraphQL\Language\Printer;
+use GraphQL\Type\Definition\ResolveInfo;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Pagination\AbstractPaginator;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Route;
+use Rebing\GraphQL\Support\Middleware;
+
+class Logstash extends Middleware
+{
+    public function terminate($root, $args, $context, ResolveInfo $info, $result): void
+    {
+        Log::channel('logstash')->info('', (
+            collect([
+                'query' => $info->fieldName,
+                'operation' => $info->operation->name->value ?? null,
+                'type' => $info->operation->operation,
+                'fields' => array_keys(Arr::dot($info->getFieldSelection($depth = PHP_INT_MAX))),
+                'schema' => Arr::first(Route::current()->parameters()) ?? config('graphql.default_schema'),
+                'vars' => $this->formatVariableDefinitions($info->operation->variableDefinitions),
+            ])
+                ->when($result instanceof Countable, function ($metadata) use ($result) {
+                    return $metadata->put('count', $result->count());
+                })
+                ->when($result instanceof AbstractPaginator, function ($metadata) use ($result) {
+                    return $metadata->put('per_page', $result->perPage());
+                })
+                ->when($result instanceof LengthAwarePaginator, function ($metadata) use ($result) {
+                    return $metadata->put('total', $result->total());
+                })
+                ->merge($this->formatArguments($args))
+                ->toArray()
+        ));
+    }
+
+    private function formatArguments(array $args): array
+    {
+        return collect(Arr::sanitize($args))
+            ->mapWithKeys(function ($value, $key) {
+                return ["\${$key}" => $value];
+            })
+            ->toArray();
+    }
+
+    private function formatVariableDefinitions(?iterable $variableDefinitions = []): array
+    {
+        return collect($variableDefinitions)
+            ->map(function ($def) {
+                return Printer::doPrint($def);
+            })
+            ->toArray();
+    }
+}
+```
+
+The terminate method receives both the resolver arguments and the query result.
+
+Once you have defined a terminable middleware, you should add it to the list of
+middleware in your queries and mutations.
 
 ### Authorization
 
@@ -1152,7 +1317,7 @@ use Rebing\GraphQL\Support\Query;
 class UsersQuery extends Query
 {
     protected $attributes = [
-        'name' => 'Users query'
+        'name' => 'users',
     ];
 
     public function type(): Type
@@ -1330,7 +1495,9 @@ class UserType extends GraphQLType
 ### Pagination
 
 Pagination will be used, if a query or mutation returns a `PaginationType`.
-Note that you have to manually handle the limit and page values:
+
+Note that unless you use [resolver middleware](#defining-middleware),
+you will have to manually supply both the limit and page values:
 
 ```php
 namespace App\GraphQL\Queries;
@@ -1453,7 +1620,7 @@ use Rebing\GraphQL\Support\EnumType;
 class EpisodeEnum extends EnumType
 {
     protected $attributes = [
-        'name' => 'Episode',
+        'name' => 'episode',
         'description' => 'The types of demographic elements',
         'values' => [
             'NEWHOPE' => 'NEWHOPE',
@@ -1514,7 +1681,7 @@ use Rebing\GraphQL\Support\UnionType;
 class SearchResultUnion extends UnionType
 {
     protected $attributes = [
-        'name' => 'SearchResult',
+        'name' => 'searchResult',
     ];
 
     public function types(): array
@@ -1553,7 +1720,7 @@ use Rebing\GraphQL\Support\InterfaceType;
 class CharacterInterface extends InterfaceType
 {
     protected $attributes = [
-        'name' => 'Character',
+        'name' => 'character',
         'description' => 'Character interface.',
     ];
 
@@ -1597,7 +1764,7 @@ use GraphQL\Type\Definition\Type;
 class HumanType extends GraphQLType
 {
     protected $attributes = [
-        'name' => 'Human',
+        'name' => 'human',
         'description' => 'A human.'
     ];
 
@@ -1701,7 +1868,7 @@ use Rebing\GraphQL\Support\InputType;
 class ReviewInput extends InputType
 {
     protected $attributes = [
-        'name' => 'ReviewInput',
+        'name' => 'reviewInput',
         'description' => 'A review with a comment and a score (0 to 5)'
     ];
 
@@ -1787,7 +1954,7 @@ use Rebing\GraphQL\Support\InputType;
 class UserInput extends InputType
 {
     protected $attributes = [
-        'name' => 'UserInput',
+        'name' => 'userInput',
         'description' => 'A review with a comment and a score (0 to 5)'
     ];
 
@@ -1824,7 +1991,7 @@ use Rebing\GraphQL\Support\Mutation;
 class UpdateUserMutation extends Mutation
 {
     protected $attributes = [
-        'name' => 'UpdateUser'
+        'name' => 'updateUser'
     ];
 
     public function type(): Type
