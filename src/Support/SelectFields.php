@@ -365,7 +365,10 @@ class SelectFields
     protected static function handleRelation(array &$select, $relation, ?string $parentTable, &$field): void
     {
         // Add the foreign key here, if it's a 'belongsTo'/'belongsToMany' relation
-        if (method_exists($relation, 'getForeignKey')) {
+        if (method_exists($relation, 'getForeignKeyName')) {
+            // Laravel 5.8+
+            $foreignKey = $relation->getForeignKeyName();
+        } elseif (method_exists($relation, 'getForeignKey')) {
             $foreignKey = $relation->getForeignKey();
         } elseif (method_exists($relation, 'getQualifiedForeignPivotKeyName')) {
             $foreignKey = $relation->getQualifiedForeignPivotKeyName();
